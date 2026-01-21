@@ -26,4 +26,4 @@ tmail masked create -d "newsletter signup"
 
 ## Config
 
-Stored at `~/.config/tmail/config.toml`
+Stored at `~/.config/tmail/config.json`
