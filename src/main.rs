@@ -39,6 +39,11 @@ enum MaskedCommands {
         #[arg(short, long)]
         description: Option<String>,
     },
+    /// Delete (archive) a masked email
+    Delete {
+        /// The email address to archive (e.g., abc123@fastmail.com)
+        email: Option<String>,
+    },
 }
 
 #[derive(Serialize, Deserialize)]
@@ -156,6 +161,57 @@ fn create(description: Option<String>) {
     }
 }
 
+fn delete(email: Option<String>) {
+    let Some(email) = email else {
+        eprintln!("Error: No email address specified.");
+        eprintln!();
+        eprintln!("Usage: tmail masked delete <EMAIL>");
+        eprintln!();
+        eprintln!("To see your masked emails, run:");
+        eprintln!("  tmail masked list");
+        eprintln!();
+        eprintln!("To include disabled/deleted emails:");
+        eprintln!("  tmail masked list --all");
+        std::process::exit(1);
+    };
+
+    let config = load_config().expect("Not logged in. Run 'tmail login' first.");
+    let client = FastmailClient::new(&config.api_token);
+
+    // Find the email in the list to get its ID
+    let emails = match client.list_masked_emails(&config.account_id) {
+        Ok(emails) => emails,
+        Err(e) => {
+            eprintln!("Failed to list masked emails: {}", e);
+            std::process::exit(1);
+        }
+    };
+
+    let masked = emails.iter().find(|e| e.email == email);
+    let Some(masked) = masked else {
+        eprintln!("Error: Masked email '{}' not found.", email);
+        eprintln!();
+        eprintln!("To see your masked emails, run:");
+        eprintln!("  tmail masked list --all");
+        std::process::exit(1);
+    };
+
+    let Some(id) = &masked.id else {
+        eprintln!("Error: Masked email has no ID.");
+        std::process::exit(1);
+    };
+
+    match client.delete_masked_email(&config.account_id, id) {
+        Ok(()) => {
+            println!("Archived: {}", email);
+        }
+        Err(e) => {
+            eprintln!("Failed to archive masked email: {}", e);
+            std::process::exit(1);
+        }
+    }
+}
+
 fn main() {
     let cli = Cli::parse();
 
@@ -164,6 +220,7 @@ fn main() {
         Commands::Masked { command } => match command {
             MaskedCommands::List { all } => list(all),
             MaskedCommands::Create { description } => create(description),
+            MaskedCommands::Delete { email } => delete(email),
         },
     }
 }
