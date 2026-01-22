@@ -48,10 +48,20 @@ pub struct JmapResponse {
     pub method_responses: Vec<(String, serde_json::Value, String)>,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Clone)]
 pub struct MaskedEmail {
     pub id: Option<String>,
     pub email: String,
+    #[serde(default)]
+    pub state: Option<String>,
+    #[serde(rename = "forDomain", default)]
+    pub for_domain: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(rename = "createdAt", default)]
+    pub created_at: Option<String>,
+    #[serde(rename = "lastMessageAt", default)]
+    pub last_message_at: Option<String>,
 }
 
 pub struct FastmailClient {
@@ -146,6 +156,52 @@ impl FastmailClient {
                 }
                 if let Some(not_created) = result.get("notCreated") {
                     return Err(FastmailError::Api(format!("{:?}", not_created)));
+                }
+            }
+        }
+
+        Err(FastmailError::Api(format!(
+            "Unexpected response: {:?}",
+            jmap
+        )))
+    }
+
+    pub fn list_masked_emails(&self, account_id: &str) -> Result<Vec<MaskedEmail>, FastmailError> {
+        let request = JmapRequest {
+            using: vec![JMAP_CORE_CAPABILITY.to_string(), MASKED_EMAIL_CAPABILITY.to_string()],
+            method_calls: vec![(
+                "MaskedEmail/get".to_string(),
+                serde_json::json!({
+                    "accountId": account_id,
+                    "ids": null
+                }),
+                "0".to_string(),
+            )],
+        };
+
+        let response = self
+            .http
+            .post(FASTMAIL_API_URL)
+            .bearer_auth(&self.token)
+            .json(&request)
+            .send()
+            .map_err(|e| FastmailError::Http(e.to_string()))?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().unwrap_or_default();
+            return Err(FastmailError::Auth(status.as_u16(), body));
+        }
+
+        let jmap: JmapResponse = response
+            .json()
+            .map_err(|e| FastmailError::Parse(e.to_string()))?;
+
+        if let Some((method, result, _)) = jmap.method_responses.first() {
+            if method == "MaskedEmail/get" {
+                if let Some(list) = result.get("list") {
+                    return serde_json::from_value(list.clone())
+                        .map_err(|e| FastmailError::Parse(e.to_string()));
                 }
             }
         }

@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::{self, Write};
 use std::path::PathBuf;
-use tmail::FastmailClient;
+use tmail::{FastmailClient, MaskedEmail};
 use serde_json;
 
 #[derive(Parser)]
@@ -27,6 +27,12 @@ enum Commands {
 
 #[derive(Subcommand)]
 enum MaskedCommands {
+    /// List all masked emails
+    List {
+        /// Show all emails including disabled/deleted
+        #[arg(short, long)]
+        all: bool,
+    },
     /// Create a new masked email
     Create {
         /// Description for the masked email
@@ -96,6 +102,45 @@ fn login() {
     }
 }
 
+fn list(all: bool) {
+    let config = load_config().expect("Not logged in. Run 'tmail login' first.");
+    let client = FastmailClient::new(&config.api_token);
+
+    match client.list_masked_emails(&config.account_id) {
+        Ok(emails) => {
+            let filtered: Vec<&MaskedEmail> = if all {
+                emails.iter().collect()
+            } else {
+                emails
+                    .iter()
+                    .filter(|e| e.state.as_deref() == Some("enabled"))
+                    .collect()
+            };
+
+            if filtered.is_empty() {
+                println!("No masked emails found.");
+                return;
+            }
+
+            for email in filtered {
+                let desc = email.description.as_deref().unwrap_or("");
+                let domain = email.for_domain.as_deref().unwrap_or("");
+                let state = email.state.as_deref().unwrap_or("unknown");
+
+                if all {
+                    println!("{}\t{}\t{}\t{}", email.email, state, domain, desc);
+                } else {
+                    println!("{}\t{}\t{}", email.email, domain, desc);
+                }
+            }
+        }
+        Err(e) => {
+            eprintln!("Failed to list masked emails: {}", e);
+            std::process::exit(1);
+        }
+    }
+}
+
 fn create(description: Option<String>) {
     let config = load_config().expect("Not logged in. Run 'tmail login' first.");
     let client = FastmailClient::new(&config.api_token);
@@ -117,6 +162,7 @@ fn main() {
     match cli.command {
         Commands::Login => login(),
         Commands::Masked { command } => match command {
+            MaskedCommands::List { all } => list(all),
             MaskedCommands::Create { description } => create(description),
         },
     }
