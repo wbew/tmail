@@ -13,6 +13,7 @@ pub enum FastmailError {
     Api(String),
     Parse(String),
     MissingCapability,
+    NotFound(String),
 }
 
 impl std::fmt::Display for FastmailError {
@@ -23,6 +24,7 @@ impl std::fmt::Display for FastmailError {
             FastmailError::Api(e) => write!(f, "API error: {}", e),
             FastmailError::Parse(e) => write!(f, "Parse error: {}", e),
             FastmailError::MissingCapability => write!(f, "Masked email capability not found"),
+            FastmailError::NotFound(e) => write!(f, "Not found: {}", e),
         }
     }
 }
@@ -211,6 +213,110 @@ impl FastmailClient {
             jmap
         )))
     }
+
+    pub fn delete_masked_email(&self, account_id: &str, id: &str) -> Result<(), FastmailError> {
+        let request = JmapRequest {
+            using: vec![JMAP_CORE_CAPABILITY.to_string(), MASKED_EMAIL_CAPABILITY.to_string()],
+            method_calls: vec![(
+                "MaskedEmail/set".to_string(),
+                serde_json::json!({
+                    "accountId": account_id,
+                    "update": {
+                        id: {
+                            "state": "disabled"
+                        }
+                    }
+                }),
+                "0".to_string(),
+            )],
+        };
+
+        let response = self
+            .http
+            .post(FASTMAIL_API_URL)
+            .bearer_auth(&self.token)
+            .json(&request)
+            .send()
+            .map_err(|e| FastmailError::Http(e.to_string()))?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().unwrap_or_default();
+            return Err(FastmailError::Auth(status.as_u16(), body));
+        }
+
+        let jmap: JmapResponse = response
+            .json()
+            .map_err(|e| FastmailError::Parse(e.to_string()))?;
+
+        if let Some((method, result, _)) = jmap.method_responses.first() {
+            if method == "MaskedEmail/set" {
+                if result.get("updated").and_then(|u| u.get(id)).is_some() {
+                    return Ok(());
+                }
+                if let Some(not_updated) = result.get("notUpdated") {
+                    return Err(FastmailError::Api(format!("{:?}", not_updated)));
+                }
+            }
+        }
+
+        Err(FastmailError::Api(format!(
+            "Unexpected response: {:?}",
+            jmap
+        )))
+    }
+
+    pub fn destroy_masked_email(&self, account_id: &str, id: &str) -> Result<(), FastmailError> {
+        let request = JmapRequest {
+            using: vec![JMAP_CORE_CAPABILITY.to_string(), MASKED_EMAIL_CAPABILITY.to_string()],
+            method_calls: vec![(
+                "MaskedEmail/set".to_string(),
+                serde_json::json!({
+                    "accountId": account_id,
+                    "update": {
+                        id: {
+                            "state": "deleted"
+                        }
+                    }
+                }),
+                "0".to_string(),
+            )],
+        };
+
+        let response = self
+            .http
+            .post(FASTMAIL_API_URL)
+            .bearer_auth(&self.token)
+            .json(&request)
+            .send()
+            .map_err(|e| FastmailError::Http(e.to_string()))?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().unwrap_or_default();
+            return Err(FastmailError::Auth(status.as_u16(), body));
+        }
+
+        let jmap: JmapResponse = response
+            .json()
+            .map_err(|e| FastmailError::Parse(e.to_string()))?;
+
+        if let Some((method, result, _)) = jmap.method_responses.first() {
+            if method == "MaskedEmail/set" {
+                if result.get("updated").and_then(|u| u.get(id)).is_some() {
+                    return Ok(());
+                }
+                if let Some(not_updated) = result.get("notUpdated") {
+                    return Err(FastmailError::Api(format!("{:?}", not_updated)));
+                }
+            }
+        }
+
+        Err(FastmailError::Api(format!(
+            "Unexpected response: {:?}",
+            jmap
+        )))
+    }
 }
 
 #[cfg(test)]
@@ -247,5 +353,51 @@ mod tests {
         let result = client.create_masked_email(&account_id, Some("test from tmail"));
         println!("Create masked email result: {:#?}", result);
         assert!(result.is_ok());
+
+        // Cleanup
+        let created = result.unwrap();
+        let id = created.id.expect("Created email has no ID");
+        client.destroy_masked_email(&account_id, &id).expect("Failed to cleanup");
+    }
+
+    #[test]
+    #[ignore]
+    fn test_list_masked_emails() {
+        let client = FastmailClient::new(get_test_token());
+        let account_id = client.get_account_id().expect("Failed to get account ID");
+        let result = client.list_masked_emails(&account_id);
+        println!("List masked emails result: {:#?}", result);
+        assert!(result.is_ok());
+        let emails = result.unwrap();
+        assert!(!emails.is_empty());
+    }
+
+    #[test]
+    #[ignore]
+    fn test_delete_masked_email() {
+        let client = FastmailClient::new(get_test_token());
+        let account_id = client.get_account_id().expect("Failed to get account ID");
+
+        // Create a test email first
+        let created = client
+            .create_masked_email(&account_id, Some("test delete"))
+            .expect("Failed to create test email");
+        println!("Created test email: {:#?}", created);
+
+        let id = created.id.expect("Created email has no ID");
+
+        // Archive it
+        let result = client.delete_masked_email(&account_id, &id);
+        println!("Delete result: {:#?}", result);
+        assert!(result.is_ok());
+
+        // Verify it's now disabled
+        let emails = client.list_masked_emails(&account_id).expect("Failed to list");
+        let archived = emails.iter().find(|e| e.id.as_deref() == Some(&id));
+        assert!(archived.is_some());
+        assert_eq!(archived.unwrap().state.as_deref(), Some("disabled"));
+
+        // Cleanup
+        client.destroy_masked_email(&account_id, &id).expect("Failed to cleanup");
     }
 }
