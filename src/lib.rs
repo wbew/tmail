@@ -111,6 +111,7 @@ impl FastmailClient {
         &self,
         account_id: &str,
         description: Option<&str>,
+        for_domain: Option<&str>,
     ) -> Result<MaskedEmail, FastmailError> {
         let request = JmapRequest {
             using: vec![JMAP_CORE_CAPABILITY.to_string(), MASKED_EMAIL_CAPABILITY.to_string()],
@@ -122,7 +123,7 @@ impl FastmailClient {
                         "new": {
                             "state": "enabled",
                             "description": description.unwrap_or_default(),
-                            "forDomain": ""
+                            "forDomain": for_domain.unwrap_or_default()
                         }
                     }
                 }),
@@ -350,7 +351,7 @@ mod tests {
     fn test_create_masked_email() {
         let client = FastmailClient::new(get_test_token());
         let account_id = client.get_account_id().expect("Failed to get account ID");
-        let result = client.create_masked_email(&account_id, Some("test from tmail"));
+        let result = client.create_masked_email(&account_id, Some("test from tmail"), None);
         println!("Create masked email result: {:#?}", result);
         assert!(result.is_ok());
 

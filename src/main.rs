@@ -1,3 +1,5 @@
+mod prompt;
+
 use clap::{Parser, Subcommand};
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -38,6 +40,9 @@ enum MaskedCommands {
         /// Description for the masked email
         #[arg(short, long)]
         description: Option<String>,
+        /// Website/domain this email is for
+        #[arg(short, long)]
+        website: Option<String>,
     },
     /// Delete (archive) a masked email
     Delete {
@@ -131,11 +136,13 @@ fn list(all: bool) {
                 let desc = email.description.as_deref().unwrap_or("");
                 let domain = email.for_domain.as_deref().unwrap_or("");
                 let state = email.state.as_deref().unwrap_or("unknown");
+                // Extract date portion from ISO 8601 timestamp (first 10 chars: "2024-01-15")
+                let created = email.created_at.as_deref().map(|s| &s[..10]).unwrap_or("");
 
                 if all {
-                    println!("{}\t{}\t{}\t{}", email.email, state, domain, desc);
+                    println!("{}\t{}\t{}\t{}\t{}", email.email, created, state, domain, desc);
                 } else {
-                    println!("{}\t{}\t{}", email.email, domain, desc);
+                    println!("{}\t{}\t{}\t{}", email.email, created, domain, desc);
                 }
             }
         }
@@ -146,11 +153,28 @@ fn list(all: bool) {
     }
 }
 
-fn create(description: Option<String>) {
+fn create(description: Option<String>, website: Option<String>) {
     let config = load_config().expect("Not logged in. Run 'tmail login' first.");
     let client = FastmailClient::new(&config.api_token);
 
-    match client.create_masked_email(&config.account_id, description.as_deref()) {
+    // Interactive mode if no description provided and stdin is a TTY
+    let (desc, site) = if description.is_none() && prompt::is_interactive() {
+        let desc = prompt::prompt_text(
+            "Description:",
+            Some("What is this masked email for?"),
+            None,
+        );
+        let site = prompt::prompt_text(
+            "Website:",
+            Some("Optional: domain this email is for"),
+            Some("example.com"),
+        );
+        (desc, site)
+    } else {
+        (description, website)
+    };
+
+    match client.create_masked_email(&config.account_id, desc.as_deref(), site.as_deref()) {
         Ok(masked) => {
             println!("{}", masked.email);
         }
@@ -219,7 +243,7 @@ fn main() {
         Commands::Login => login(),
         Commands::Masked { command } => match command {
             MaskedCommands::List { all } => list(all),
-            MaskedCommands::Create { description } => create(description),
+            MaskedCommands::Create { description, website } => create(description, website),
             MaskedCommands::Delete { email } => delete(email),
         },
     }
