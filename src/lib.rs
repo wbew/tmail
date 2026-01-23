@@ -50,7 +50,7 @@ pub struct JmapResponse {
     pub method_responses: Vec<(String, serde_json::Value, String)>,
 }
 
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Deserialize, Serialize, Debug, Clone)]
 pub struct MaskedEmail {
     pub id: Option<String>,
     pub email: String,

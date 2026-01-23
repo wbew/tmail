@@ -34,6 +34,9 @@ enum MaskedCommands {
         /// Show all emails including disabled/deleted
         #[arg(short, long)]
         all: bool,
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
     },
     /// Create a new masked email
     Create {
@@ -112,7 +115,7 @@ fn login() {
     }
 }
 
-fn list(all: bool) {
+fn list(all: bool, json: bool) {
     let config = load_config().expect("Not logged in. Run 'tmail login' first.");
     let client = FastmailClient::new(&config.api_token);
 
@@ -126,6 +129,11 @@ fn list(all: bool) {
                     .filter(|e| e.state.as_deref() == Some("enabled"))
                     .collect()
             };
+
+            if json {
+                println!("{}", serde_json::to_string_pretty(&filtered).unwrap());
+                return;
+            }
 
             if filtered.is_empty() {
                 println!("No masked emails found.");
@@ -242,7 +250,7 @@ fn main() {
     match cli.command {
         Commands::Login => login(),
         Commands::Masked { command } => match command {
-            MaskedCommands::List { all } => list(all),
+            MaskedCommands::List { all, json } => list(all, json),
             MaskedCommands::Create { description, website } => create(description, website),
             MaskedCommands::Delete { email } => delete(email),
         },
